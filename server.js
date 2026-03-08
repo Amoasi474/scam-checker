@@ -1,9 +1,10 @@
 const express = require("express");
 const path = require("path");
 const whois = require("whois");
+const axios = require("axios");
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
@@ -41,6 +42,8 @@ function getRiskTld(domain) {
 }
 
 function extractCreationDate(raw) {
+  if (!raw) return null;
+
   const patterns = [
     /Creation Date:\s*(.+)/i,
     /Created On:\s*(.+)/i,
@@ -61,6 +64,8 @@ function extractCreationDate(raw) {
 }
 
 function detectHiddenOwner(raw) {
+  if (!raw) return false;
+
   const hiddenIndicators = [
     "redacted for privacy",
     "privacy service",
@@ -124,6 +129,36 @@ function lookupWhois(domain) {
   });
 }
 
+async function checkVirusTotalDomain(domain) {
+  const apiKey = process.env.VT_API_KEY;
+  if (!apiKey) return null;
+
+  try {
+    const response = await axios.get(
+      `https://www.virustotal.com/api/v3/domains/${domain}`,
+      {
+        headers: {
+          "x-apikey": apiKey,
+        },
+      }
+    );
+
+    const attributes = response.data?.data?.attributes || {};
+    const stats = attributes.last_analysis_stats || {};
+
+    return {
+      malicious: stats.malicious || 0,
+      suspicious: stats.suspicious || 0,
+      harmless: stats.harmless || 0,
+      undetected: stats.undetected || 0,
+      reputation: attributes.reputation ?? null,
+    };
+  } catch (error) {
+    console.log("VirusTotal check failed");
+    return null;
+  }
+}
+
 app.post("/api/check", async (req, res) => {
   try {
     const input = req.body.domain;
@@ -133,7 +168,14 @@ app.post("/api/check", async (req, res) => {
       return res.status(400).json({ error: "Please enter a valid domain or URL." });
     }
 
-    const rawWhois = await lookupWhois(domain);
+    let rawWhois = "";
+    try {
+      rawWhois = await lookupWhois(domain);
+    } catch (error) {
+      console.log("WHOIS lookup failed");
+      rawWhois = "";
+    }
+
     const createdAtRaw = extractCreationDate(rawWhois);
     const ageDays = calculateAgeInDays(createdAtRaw);
     const hiddenOwner = detectHiddenOwner(rawWhois);
@@ -145,6 +187,28 @@ app.post("/api/check", async (req, res) => {
       riskyTld,
     });
 
+    const vtResult = await checkVirusTotalDomain(domain);
+
+    if (vtResult) {
+      if (vtResult.malicious > 0) {
+        risk.score += 50;
+        risk.reasons.push(`VirusTotal marked this domain as malicious (${vtResult.malicious})`);
+      }
+
+      if (vtResult.suspicious > 0) {
+        risk.score += 25;
+        risk.reasons.push(`VirusTotal marked this domain as suspicious (${vtResult.suspicious})`);
+      }
+
+      if (risk.score >= 60) {
+        risk.riskLevel = "HIGH";
+      } else if (risk.score >= 30) {
+        risk.riskLevel = "MEDIUM";
+      } else {
+        risk.riskLevel = "LOW";
+      }
+    }
+
     res.json({
       domain,
       createdAt: createdAtRaw || "Not found",
@@ -154,6 +218,7 @@ app.post("/api/check", async (req, res) => {
       riskLevel: risk.riskLevel,
       score: risk.score,
       reasons: risk.reasons,
+      vtResult,
     });
   } catch (error) {
     console.error(error);
@@ -164,5 +229,5 @@ app.post("/api/check", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Scam Checker running on http://localhost:${PORT}`);
+  console.log(`Scam Checker running on port ${PORT}`);
 });
