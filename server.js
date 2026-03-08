@@ -227,7 +227,27 @@ app.post("/api/check", async (req, res) => {
     });
   }
 });
+// PAYMENT LINK GENERATOR
+app.post("/api/payment-link", async (req, res) => {
+  try {
+    const { telegramId } = req.body;
 
+    if (!telegramId) {
+      return res.status(400).json({ error: "Telegram ID required" });
+    }
+
+    const paymentLink = `https://paystack.com/pay/scamchecker-premium`;
+
+    res.json({
+      paymentLink,
+      telegramId
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to create payment link" });
+  }
+});
 app.listen(PORT, () => {
   console.log(`Scam Checker running on port ${PORT}`);
 });

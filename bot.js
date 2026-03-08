@@ -40,22 +40,36 @@ Useful commands:
   );
 });
 
-bot.onText(/\/upgrade/, (msg) => {
+bot.onText(/\/upgrade/, async (msg) => {
   users.add(msg.from.id);
 
-  bot.sendMessage(
-    msg.chat.id,
-`⭐ Premium Plan
+  try {
+    const response = await fetch("https://scam-checker.onrender.com/api/payment-link", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ telegramId: msg.from.id })
+    });
 
-Premium users get:
-- VirusTotal results
-- More advanced scam checks
-- Future premium features
+    const data = await response.json();
+
+    bot.sendMessage(
+      msg.chat.id,
+`⭐ Premium Plan
 
 Price: $3/month
 
-Message the admin after payment to get activated.`
-  );
+Complete payment here:
+${data.paymentLink}
+
+After payment, send your receipt to the admin to activate premium.`
+    );
+
+  } catch (error) {
+    console.error(error);
+    bot.sendMessage(msg.chat.id, "Payment service unavailable.");
+  }
 });
 
 bot.onText(/\/admin/, (msg) => {
