@@ -3,6 +3,9 @@ const TelegramBot = require("node-telegram-bot-api");
 const token = process.env.BOT_TOKEN;
 const bot = new TelegramBot(token, { polling: true });
 
+const ADMIN_ID = "YOUR_TELEGRAM_ID";
+const users = new Set();
+
 console.log("Telegram bot is running...");
 
 function normalizeDomain(input) {
@@ -27,7 +30,51 @@ bot.onText(/\/start/, (msg) => {
   );
 });
 
+bot.onText(/\/admin/, (msg) => {
+  if (String(msg.from.id) !== ADMIN_ID) {
+    return bot.sendMessage(msg.chat.id, "⛔ You are not authorized.");
+  }
+
+  bot.sendMessage(
+    msg.chat.id,
+`🛠 Admin Panel
+
+/stats - bot statistics
+/broadcast MESSAGE - send message to all users`
+  );
+});
+
+bot.onText(/\/stats/, (msg) => {
+  if (String(msg.from.id) !== ADMIN_ID) {
+    return bot.sendMessage(msg.chat.id, "⛔ Not authorized.");
+  }
+
+  bot.sendMessage(
+    msg.chat.id,
+`📊 Bot Stats
+
+Users: ${users.size}
+Status: Online`
+  );
+});
+
+bot.onText(/\/broadcast (.+)/, (msg, match) => {
+  if (String(msg.from.id) !== ADMIN_ID) {
+    return bot.sendMessage(msg.chat.id, "⛔ Not authorized.");
+  }
+
+  const message = match[1];
+
+  users.forEach((userId) => {
+    bot.sendMessage(userId, `📢 Admin Message:\n\n${message}`);
+  });
+
+  bot.sendMessage(msg.chat.id, "Broadcast sent.");
+});
+
 bot.on("message", async (msg) => {
+  users.add(msg.from.id);
+
   const text = msg.text;
 
   if (!text || text.startsWith("/")) return;
