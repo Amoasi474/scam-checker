@@ -545,7 +545,7 @@ Use /invite to earn extra scans.`
   }
 
   try {
-    const response = await fetch("https://scam-checker.onrender.com/api/check", {
+    const response = await fetch(`${process.env.PUBLIC_BASE_URL}/api/check`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
