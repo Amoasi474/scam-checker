@@ -6,7 +6,6 @@ const bot = new TelegramBot(token, { polling: true });
 
 const ADMIN_ID = "7221641395";
 const users = new Set();
-const PAYMENT_LINK = "https://paystack.shop/pay/zbxb4v15ns";
 const FREE_DAILY_LIMIT = 5;
 const REFERRAL_REWARD_EVERY = 3;
 const REFERRAL_BONUS_SCANS = 5;
@@ -167,6 +166,24 @@ async function registerReferral(referrerId, referredId) {
   return { created: true, total, rewardGiven };
 }
 
+async function createPaymentLink(telegramId) {
+  const response = await fetch("https://scam-checker.onrender.com/api/payment-link", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ telegramId })
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || "Failed to create payment link.");
+  }
+
+  return data.paymentLink;
+}
+
 function normalizeDomain(input) {
   try {
     let value = input.trim().toLowerCase();
@@ -296,11 +313,14 @@ Every ${REFERRAL_REWARD_EVERY} successful invites = +${REFERRAL_BONUS_SCANS} ext
   );
 });
 
-bot.onText(/\/upgrade/, (msg) => {
+bot.onText(/\/upgrade/, async (msg) => {
   users.add(msg.from.id);
 
-  bot.sendMessage(
-    msg.chat.id,
+  try {
+    const paymentLink = await createPaymentLink(msg.from.id);
+
+    bot.sendMessage(
+      msg.chat.id,
 `⭐ Premium Plan
 
 Premium users get:
@@ -311,11 +331,17 @@ Premium users get:
 Price: $3/month
 
 Complete payment here:
-${PAYMENT_LINK}
+${paymentLink}
 
-After payment, send:
-/paid`
-  );
+✅ Premium should activate automatically after successful payment.`
+    );
+  } catch (error) {
+    console.error("Upgrade error:", error);
+    bot.sendMessage(
+      msg.chat.id,
+      "Failed to create payment link. Please try again in a moment."
+    );
+  }
 });
 
 bot.onText(/\/myplan/, async (msg) => {
@@ -360,19 +386,7 @@ bot.onText(/\/paid/, (msg) => {
 
   bot.sendMessage(
     msg.chat.id,
-    "Payment request received. Please wait while the admin confirms your premium access."
-  );
-
-  bot.sendMessage(
-    ADMIN_ID,
-`💰 New premium payment request
-
-User ID: ${msg.from.id}
-Username: @${msg.from.username || "none"}
-Name: ${msg.from.first_name || ""} ${msg.from.last_name || ""}
-
-If payment is confirmed, run:
-/addpremium ${msg.from.id}`
+    "If your payment was successful, premium should activate automatically shortly. If it does not, contact the admin."
   );
 });
 
@@ -491,6 +505,18 @@ bot.on("callback_query", async (query) => {
     );
   }
 
+  if (data === "upgrade_dynamic") {
+    try {
+      const paymentLink = await createPaymentLink(query.from.id);
+      await bot.sendMessage(
+        chatId,
+        `⭐ Complete your premium payment here:\n\n${paymentLink}`
+      );
+    } catch (error) {
+      await bot.sendMessage(chatId, "Failed to create payment link.");
+    }
+  }
+
   await bot.answerCallbackQuery(query.id);
 });
 
@@ -596,7 +622,7 @@ Checked with Scamchecker Bot
         [
           {
             text: "🚀 Upgrade",
-            url: PAYMENT_LINK
+            callback_data: "upgrade_dynamic"
           },
           process.env.BOT_USERNAME
             ? {
