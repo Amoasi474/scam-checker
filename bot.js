@@ -203,17 +203,13 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
 
         await bot.sendMessage(
           referrerId,
-          `🎉 New referral joined!
-
-Total referrals: ${result.total}`
+          `🎉 New referral joined!\n\nTotal referrals: ${result.total}`
         );
 
         if (result.rewardGiven) {
           await bot.sendMessage(
             referrerId,
-            `🔥 Referral reward unlocked!
-
-You earned +${REFERRAL_BONUS_SCANS} extra scans for today for reaching ${result.total} referrals.`
+            `🔥 Referral reward unlocked!\n\nYou earned +${REFERRAL_BONUS_SCANS} extra scans for today for reaching ${result.total} referrals.`
           );
         }
       }
@@ -443,6 +439,27 @@ ${ids.join("\n")}`
   );
 });
 
+bot.on("callback_query", async (query) => {
+  const data = query.data;
+  const chatId = query.message.chat.id;
+
+  if (data === "check_another") {
+    await bot.sendMessage(
+      chatId,
+      "Send another domain or use:\n/check example.com"
+    );
+  }
+
+  if (data === "share_bot_unavailable") {
+    await bot.sendMessage(
+      chatId,
+      "Set BOT_USERNAME in Railway variables to enable the share button."
+    );
+  }
+
+  await bot.answerCallbackQuery(query.id);
+});
+
 async function runDomainCheck(msg, domainInput) {
   const domain = normalizeDomain(domainInput);
 
@@ -486,6 +503,10 @@ Use /invite to earn extra scans.`
       await incrementTodayUsage(msg.from.id);
     }
 
+    let riskEmoji = "🟢";
+    if (data.riskLevel === "HIGH") riskEmoji = "🔴";
+    else if (data.riskLevel === "MEDIUM") riskEmoji = "🟠";
+
     let premiumBadge = "";
     if (isPremium) {
       premiumBadge = "\n⭐ Premium User";
@@ -495,10 +516,10 @@ Use /invite to earn extra scans.`
     if (isPremium && data.vtResult) {
       vtInfo = `
 🛡 VirusTotal
-Malicious: ${data.vtResult.malicious}
-Suspicious: ${data.vtResult.suspicious}
-Harmless: ${data.vtResult.harmless}
-Undetected: ${data.vtResult.undetected}
+• Malicious: ${data.vtResult.malicious}
+• Suspicious: ${data.vtResult.suspicious}
+• Harmless: ${data.vtResult.harmless}
+• Undetected: ${data.vtResult.undetected}
 `;
     } else {
       const usedNow = isPremium ? 0 : await getTodayUsage(msg.from.id);
@@ -513,23 +534,58 @@ ${isPremium ? "" : `Free scans remaining today: ${remaining}`}
 `;
     }
 
-    const shareText = process.env.BOT_USERNAME
-      ? `\n📣 Share this bot:\nhttps://t.me/${process.env.BOT_USERNAME}`
-      : "";
+    const reasonsText = data.reasons?.length
+      ? data.reasons.slice(0, 3).map((r) => `• ${r}`).join("\n")
+      : "• No major red flags found";
 
-    const reply = `
-🔎 Domain: ${data.domain}${premiumBadge}
+    const card = `
+┏━━━━━━━━━━━━━━━━━━┓
+   SCAMCHECKER REPORT
+┗━━━━━━━━━━━━━━━━━━┛
 
-🚨 Risk Level: ${data.riskLevel}
-📊 Risk score: ${data.score}/100
-
+🌐 Domain: ${data.domain}${premiumBadge}
+${riskEmoji} Risk Level: ${data.riskLevel}
+📊 Score: ${data.score}/100
 📅 Created: ${data.createdAt}
-🕒 Age (days): ${data.ageDays ?? "Unknown"}
+🕒 Age: ${data.ageDays ?? "Unknown"} days
 
-${vtInfo}${shareText}
+Top Reasons:
+${reasonsText}
+
+${vtInfo}
+
+Checked with Scamchecker Bot
 `;
 
-    bot.sendMessage(msg.chat.id, reply.trim());
+    const keyboard = {
+      inline_keyboard: [
+        [
+          {
+            text: "🚀 Upgrade",
+            url: PAYMENT_LINK
+          },
+          process.env.BOT_USERNAME
+            ? {
+                text: "📣 Share Bot",
+                url: `https://t.me/${process.env.BOT_USERNAME}`
+              }
+            : {
+                text: "📣 Share Bot",
+                callback_data: "share_bot_unavailable"
+              }
+        ],
+        [
+          {
+            text: "🔎 Check Another",
+            callback_data: "check_another"
+          }
+        ]
+      ]
+    };
+
+    await bot.sendMessage(msg.chat.id, card.trim(), {
+      reply_markup: keyboard
+    });
   } catch (error) {
     console.error(error);
     bot.sendMessage(msg.chat.id, "Failed to check domain.");
