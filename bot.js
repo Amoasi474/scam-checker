@@ -7,6 +7,7 @@ const bot = new TelegramBot(token, { polling: true });
 const ADMIN_ID = "7221641395";
 const users = new Set();
 const PAYMENT_LINK = "https://paystack.shop/pay/zbxb4v15ns";
+const FREE_DAILY_LIMIT = 5;
 
 const PREMIUM_USERS = new Set();
 
@@ -24,13 +25,21 @@ async function initDatabase() {
       )
     `);
 
-    const result = await pool.query("SELECT user_id FROM premium_users");
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS scan_usage (
+        user_id BIGINT NOT NULL,
+        scan_date DATE NOT NULL,
+        count INT NOT NULL DEFAULT 0,
+        PRIMARY KEY (user_id, scan_date)
+      )
+    `);
 
-    result.rows.forEach(row => {
+    const result = await pool.query("SELECT user_id FROM premium_users");
+    result.rows.forEach((row) => {
       PREMIUM_USERS.add(Number(row.user_id));
     });
 
-    console.log("Premium users loaded from database.");
+    console.log("Database initialized.");
   } catch (err) {
     console.error("Database init error:", err);
   }
@@ -41,7 +50,6 @@ async function addPremiumUser(userId) {
     "INSERT INTO premium_users (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING",
     [userId]
   );
-
   PREMIUM_USERS.add(Number(userId));
 }
 
@@ -50,8 +58,29 @@ async function removePremiumUser(userId) {
     "DELETE FROM premium_users WHERE user_id = $1",
     [userId]
   );
-
   PREMIUM_USERS.delete(Number(userId));
+}
+
+async function getTodayUsage(userId) {
+  const result = await pool.query(
+    "SELECT count FROM scan_usage WHERE user_id = $1 AND scan_date = CURRENT_DATE",
+    [userId]
+  );
+
+  if (!result.rows.length) return 0;
+  return Number(result.rows[0].count);
+}
+
+async function incrementTodayUsage(userId) {
+  await pool.query(
+    `
+    INSERT INTO scan_usage (user_id, scan_date, count)
+    VALUES ($1, CURRENT_DATE, 1)
+    ON CONFLICT (user_id, scan_date)
+    DO UPDATE SET count = scan_usage.count + 1
+    `,
+    [userId]
+  );
 }
 
 console.log("Telegram bot is running...");
@@ -83,7 +112,8 @@ google.com
 heinekenapp.top
 
 Useful commands:
-/upgrade - see premium plan`
+/upgrade - see premium plan
+/myplan - view your plan`
   );
 });
 
@@ -97,7 +127,7 @@ bot.onText(/\/upgrade/, (msg) => {
 Premium users get:
 • VirusTotal results
 • Advanced scam detection
-• Future premium features
+• Unlimited daily scans
 
 Price: $3/month
 
@@ -106,6 +136,33 @@ ${PAYMENT_LINK}
 
 After payment, send:
 /paid`
+  );
+});
+
+bot.onText(/\/myplan/, async (msg) => {
+  users.add(msg.from.id);
+
+  const isPremium = PREMIUM_USERS.has(msg.from.id);
+
+  if (isPremium) {
+    return bot.sendMessage(
+      msg.chat.id,
+      "⭐ Your current plan: Premium\nUnlimited daily scans."
+    );
+  }
+
+  const used = await getTodayUsage(msg.from.id);
+  const remaining = Math.max(FREE_DAILY_LIMIT - used, 0);
+
+  bot.sendMessage(
+    msg.chat.id,
+    `🆓 Your current plan: Free
+
+Daily limit: ${FREE_DAILY_LIMIT}
+Used today: ${used}
+Remaining today: ${remaining}
+
+Use /upgrade to unlock unlimited scans.`
   );
 });
 
@@ -147,8 +204,14 @@ bot.onText(/\/admin/, (msg) => {
   );
 });
 
-bot.onText(/\/stats/, (msg) => {
+bot.onText(/\/stats/, async (msg) => {
   if (String(msg.from.id) !== ADMIN_ID) return;
+
+  const todayResult = await pool.query(
+    "SELECT COALESCE(SUM(count), 0) AS total FROM scan_usage WHERE scan_date = CURRENT_DATE"
+  );
+
+  const totalToday = Number(todayResult.rows[0].total || 0);
 
   bot.sendMessage(
     msg.chat.id,
@@ -156,6 +219,8 @@ bot.onText(/\/stats/, (msg) => {
 
 Users: ${users.size}
 Premium users: ${PREMIUM_USERS.size}
+Scans today: ${totalToday}
+Free daily limit: ${FREE_DAILY_LIMIT}
 Status: Online`
   );
 });
@@ -165,7 +230,7 @@ bot.onText(/\/broadcast (.+)/, (msg, match) => {
 
   const message = match[1];
 
-  users.forEach(userId => {
+  users.forEach((userId) => {
     bot.sendMessage(userId, `📢 Admin Message:\n\n${message}`);
   });
 
@@ -176,6 +241,7 @@ bot.onText(/\/addpremium (.+)/, async (msg, match) => {
   if (String(msg.from.id) !== ADMIN_ID) return;
 
   const userId = Number(match[1]);
+  if (!userId) return bot.sendMessage(msg.chat.id, "Please provide a valid user ID.");
 
   await addPremiumUser(userId);
 
@@ -187,6 +253,7 @@ bot.onText(/\/removepremium (.+)/, async (msg, match) => {
   if (String(msg.from.id) !== ADMIN_ID) return;
 
   const userId = Number(match[1]);
+  if (!userId) return bot.sendMessage(msg.chat.id, "Please provide a valid user ID.");
 
   await removePremiumUser(userId);
 
@@ -214,14 +281,26 @@ bot.on("message", async (msg) => {
   users.add(msg.from.id);
 
   const text = msg.text;
-
   if (!text || text.startsWith("/")) return;
 
   const domain = normalizeDomain(text);
-
   if (!domain) {
-    bot.sendMessage(msg.chat.id, "Please send a valid domain or URL.");
-    return;
+    return bot.sendMessage(msg.chat.id, "Please send a valid domain or URL.");
+  }
+
+  const isPremium = PREMIUM_USERS.has(msg.from.id);
+
+  if (!isPremium) {
+    const usedToday = await getTodayUsage(msg.from.id);
+
+    if (usedToday >= FREE_DAILY_LIMIT) {
+      return bot.sendMessage(
+        msg.chat.id,
+`🛑 You have reached your free daily limit of ${FREE_DAILY_LIMIT} scans.
+
+Use /upgrade to unlock unlimited scans.`
+      );
+    }
   }
 
   try {
@@ -235,13 +314,21 @@ bot.on("message", async (msg) => {
 
     const data = await response.json();
 
+    if (!response.ok) {
+      return bot.sendMessage(msg.chat.id, data.error || "Failed to check that domain.");
+    }
+
+    if (!isPremium) {
+      await incrementTodayUsage(msg.from.id);
+    }
+
     let premiumBadge = "";
-    if (PREMIUM_USERS.has(msg.from.id)) {
+    if (isPremium) {
       premiumBadge = "\n⭐ Premium User";
     }
 
     let vtInfo = "";
-    if (PREMIUM_USERS.has(msg.from.id) && data.vtResult) {
+    if (isPremium && data.vtResult) {
       vtInfo = `
 🛡 VirusTotal
 Malicious: ${data.vtResult.malicious}
@@ -250,9 +337,15 @@ Harmless: ${data.vtResult.harmless}
 Undetected: ${data.vtResult.undetected}
 `;
     } else {
+      const usedNow = isPremium ? 0 : await getTodayUsage(msg.from.id);
+      const remaining = isPremium ? "Unlimited" : Math.max(FREE_DAILY_LIMIT - usedNow, 0);
+
       vtInfo = `
 🔒 VirusTotal results are premium.
-Use /upgrade to unlock.`;
+Use /upgrade to unlock.
+
+${isPremium ? "" : `Free scans remaining today: ${remaining}`}
+`;
     }
 
     const reply = `
@@ -268,7 +361,6 @@ ${vtInfo}
 `;
 
     bot.sendMessage(msg.chat.id, reply.trim());
-
   } catch (error) {
     console.error(error);
     bot.sendMessage(msg.chat.id, "Failed to check domain.");
