@@ -1,13 +1,45 @@
 const TelegramBot = require("node-telegram-bot-api");
+const fs = require("fs");
+const path = require("path");
 
 const token = process.env.BOT_TOKEN;
 const bot = new TelegramBot(token, { polling: true });
 
 const ADMIN_ID = "7221641395";
 const users = new Set();
-const PREMIUM_USERS = new Set();
 
+const DATA_DIR = __dirname;
+const PREMIUM_FILE = path.join(DATA_DIR, "premium-users.json");
 const PAYMENT_LINK = "https://paystack.shop/pay/zbxb4v15ns";
+
+function loadPremiumUsers() {
+  try {
+    const data = fs.readFileSync(PREMIUM_FILE, "utf8");
+    const parsed = JSON.parse(data);
+
+    if (Array.isArray(parsed)) {
+      return new Set(parsed.map((id) => Number(id)));
+    }
+
+    return new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function savePremiumUsers() {
+  try {
+    fs.writeFileSync(
+      PREMIUM_FILE,
+      JSON.stringify([...PREMIUM_USERS], null, 2),
+      "utf8"
+    );
+  } catch (error) {
+    console.error("Failed to save premium users:", error);
+  }
+}
+
+const PREMIUM_USERS = loadPremiumUsers();
 
 console.log("Telegram bot is running...");
 
@@ -143,6 +175,8 @@ bot.onText(/\/addpremium (.+)/, (msg, match) => {
   }
 
   PREMIUM_USERS.add(userId);
+  savePremiumUsers();
+
   bot.sendMessage(msg.chat.id, `✅ User ${userId} added to premium.`);
   bot.sendMessage(userId, "✅ Your premium access has been activated.");
 });
@@ -159,6 +193,8 @@ bot.onText(/\/removepremium (.+)/, (msg, match) => {
   }
 
   PREMIUM_USERS.delete(userId);
+  savePremiumUsers();
+
   bot.sendMessage(msg.chat.id, `✅ User ${userId} removed from premium.`);
 });
 
@@ -167,9 +203,17 @@ bot.onText(/\/premiumlist/, (msg) => {
     return bot.sendMessage(msg.chat.id, "⛔ Not authorized.");
   }
 
+  const ids = [...PREMIUM_USERS];
+
+  if (!ids.length) {
+    return bot.sendMessage(msg.chat.id, "⭐ No premium users yet.");
+  }
+
   bot.sendMessage(
     msg.chat.id,
-    `⭐ Premium users count: ${PREMIUM_USERS.size}`
+    `⭐ Premium users (${ids.length}):
+
+${ids.join("\n")}`
   );
 });
 
