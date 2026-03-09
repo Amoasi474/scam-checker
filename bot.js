@@ -167,7 +167,7 @@ async function registerReferral(referrerId, referredId) {
 }
 
 async function createPaymentLink(telegramId) {
-  const response = await fetch("https://scam-checker.onrender.com/api/payment-link", {
+  const response = await fetch (`${process.env.PUBLIC_BASE_URL}/api/payment-link`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -217,7 +217,7 @@ function extractDomainFromText(text) {
 
 async function quickCheckDomain(domain) {
   try {
-    const response = await fetch("https://scam-checker.onrender.com/api/check", {
+    const response = await fetch(`${process.env.PUBLIC_BASE_URL}/api/check`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
