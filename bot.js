@@ -7,6 +7,8 @@ const ADMIN_ID = "7221641395";
 const users = new Set();
 const PREMIUM_USERS = new Set();
 
+const PAYMENT_LINK = "https://paystack.shop/pay/zbxb4v15ns";
+
 console.log("Telegram bot is running...");
 
 function normalizeDomain(input) {
@@ -40,36 +42,47 @@ Useful commands:
   );
 });
 
-bot.onText(/\/upgrade/, async (msg) => {
+bot.onText(/\/upgrade/, (msg) => {
   users.add(msg.from.id);
 
-  try {
-    const response = await fetch("https://scam-checker.onrender.com/api/payment-link", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ telegramId: msg.from.id })
-    });
-
-    const data = await response.json();
-
-    bot.sendMessage(
-      msg.chat.id,
+  bot.sendMessage(
+    msg.chat.id,
 `⭐ Premium Plan
+
+Premium users get:
+- VirusTotal results
+- Advanced scam detection
+- Future premium features
 
 Price: $3/month
 
 Complete payment here:
-${data.paymentLink}
+${PAYMENT_LINK}
 
-After payment, send your receipt to the admin to activate premium.`
-    );
+After payment, send:
+/paid`
+  );
+});
 
-  } catch (error) {
-    console.error(error);
-    bot.sendMessage(msg.chat.id, "Payment service unavailable.");
-  }
+bot.onText(/\/paid/, (msg) => {
+  users.add(msg.from.id);
+
+  bot.sendMessage(
+    msg.chat.id,
+    "Payment request received. Please wait while the admin confirms your premium access."
+  );
+
+  bot.sendMessage(
+    ADMIN_ID,
+`💰 New premium payment request
+
+User ID: ${msg.from.id}
+Username: @${msg.from.username || "none"}
+Name: ${msg.from.first_name || ""} ${msg.from.last_name || ""}
+
+If payment is confirmed, run:
+/addpremium ${msg.from.id}`
+  );
 });
 
 bot.onText(/\/admin/, (msg) => {
@@ -131,6 +144,7 @@ bot.onText(/\/addpremium (.+)/, (msg, match) => {
 
   PREMIUM_USERS.add(userId);
   bot.sendMessage(msg.chat.id, `✅ User ${userId} added to premium.`);
+  bot.sendMessage(userId, "✅ Your premium access has been activated.");
 });
 
 bot.onText(/\/removepremium (.+)/, (msg, match) => {
