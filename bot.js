@@ -1,45 +1,58 @@
 const TelegramBot = require("node-telegram-bot-api");
-const fs = require("fs");
-const path = require("path");
+const { Pool } = require("pg");
 
 const token = process.env.BOT_TOKEN;
 const bot = new TelegramBot(token, { polling: true });
 
 const ADMIN_ID = "7221641395";
 const users = new Set();
-
-const DATA_DIR = __dirname;
-const PREMIUM_FILE = path.join(DATA_DIR, "premium-users.json");
 const PAYMENT_LINK = "https://paystack.shop/pay/zbxb4v15ns";
 
-function loadPremiumUsers() {
+const PREMIUM_USERS = new Set();
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
+
+async function initDatabase() {
   try {
-    const data = fs.readFileSync(PREMIUM_FILE, "utf8");
-    const parsed = JSON.parse(data);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS premium_users (
+        user_id BIGINT PRIMARY KEY,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
 
-    if (Array.isArray(parsed)) {
-      return new Set(parsed.map((id) => Number(id)));
-    }
+    const result = await pool.query("SELECT user_id FROM premium_users");
 
-    return new Set();
-  } catch {
-    return new Set();
+    result.rows.forEach(row => {
+      PREMIUM_USERS.add(Number(row.user_id));
+    });
+
+    console.log("Premium users loaded from database.");
+  } catch (err) {
+    console.error("Database init error:", err);
   }
 }
 
-function savePremiumUsers() {
-  try {
-    fs.writeFileSync(
-      PREMIUM_FILE,
-      JSON.stringify([...PREMIUM_USERS], null, 2),
-      "utf8"
-    );
-  } catch (error) {
-    console.error("Failed to save premium users:", error);
-  }
+async function addPremiumUser(userId) {
+  await pool.query(
+    "INSERT INTO premium_users (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING",
+    [userId]
+  );
+
+  PREMIUM_USERS.add(Number(userId));
 }
 
-const PREMIUM_USERS = loadPremiumUsers();
+async function removePremiumUser(userId) {
+  await pool.query(
+    "DELETE FROM premium_users WHERE user_id = $1",
+    [userId]
+  );
+
+  PREMIUM_USERS.delete(Number(userId));
+}
 
 console.log("Telegram bot is running...");
 
@@ -63,7 +76,7 @@ bot.onText(/\/start/, (msg) => {
 
   bot.sendMessage(
     msg.chat.id,
-    `Welcome to Scamchecker.
+`Welcome to Scamchecker.
 
 Send me any domain like:
 google.com
@@ -82,9 +95,9 @@ bot.onText(/\/upgrade/, (msg) => {
 `⭐ Premium Plan
 
 Premium users get:
-- VirusTotal results
-- Advanced scam detection
-- Future premium features
+• VirusTotal results
+• Advanced scam detection
+• Future premium features
 
 Price: $3/month
 
@@ -128,16 +141,14 @@ bot.onText(/\/admin/, (msg) => {
 
 /stats - bot statistics
 /broadcast MESSAGE - send message to all users
-/addpremium USER_ID - add premium user
-/removepremium USER_ID - remove premium user
-/premiumlist - show premium user count`
+/addpremium USER_ID
+/removepremium USER_ID
+/premiumlist`
   );
 });
 
 bot.onText(/\/stats/, (msg) => {
-  if (String(msg.from.id) !== ADMIN_ID) {
-    return bot.sendMessage(msg.chat.id, "⛔ Not authorized.");
-  }
+  if (String(msg.from.id) !== ADMIN_ID) return;
 
   bot.sendMessage(
     msg.chat.id,
@@ -150,58 +161,40 @@ Status: Online`
 });
 
 bot.onText(/\/broadcast (.+)/, (msg, match) => {
-  if (String(msg.from.id) !== ADMIN_ID) {
-    return bot.sendMessage(msg.chat.id, "⛔ Not authorized.");
-  }
+  if (String(msg.from.id) !== ADMIN_ID) return;
 
   const message = match[1];
 
-  users.forEach((userId) => {
+  users.forEach(userId => {
     bot.sendMessage(userId, `📢 Admin Message:\n\n${message}`);
   });
 
   bot.sendMessage(msg.chat.id, "Broadcast sent.");
 });
 
-bot.onText(/\/addpremium (.+)/, (msg, match) => {
-  if (String(msg.from.id) !== ADMIN_ID) {
-    return bot.sendMessage(msg.chat.id, "⛔ Not authorized.");
-  }
+bot.onText(/\/addpremium (.+)/, async (msg, match) => {
+  if (String(msg.from.id) !== ADMIN_ID) return;
 
   const userId = Number(match[1]);
 
-  if (!userId) {
-    return bot.sendMessage(msg.chat.id, "Please provide a valid user ID.");
-  }
-
-  PREMIUM_USERS.add(userId);
-  savePremiumUsers();
+  await addPremiumUser(userId);
 
   bot.sendMessage(msg.chat.id, `✅ User ${userId} added to premium.`);
   bot.sendMessage(userId, "✅ Your premium access has been activated.");
 });
 
-bot.onText(/\/removepremium (.+)/, (msg, match) => {
-  if (String(msg.from.id) !== ADMIN_ID) {
-    return bot.sendMessage(msg.chat.id, "⛔ Not authorized.");
-  }
+bot.onText(/\/removepremium (.+)/, async (msg, match) => {
+  if (String(msg.from.id) !== ADMIN_ID) return;
 
   const userId = Number(match[1]);
 
-  if (!userId) {
-    return bot.sendMessage(msg.chat.id, "Please provide a valid user ID.");
-  }
-
-  PREMIUM_USERS.delete(userId);
-  savePremiumUsers();
+  await removePremiumUser(userId);
 
   bot.sendMessage(msg.chat.id, `✅ User ${userId} removed from premium.`);
 });
 
 bot.onText(/\/premiumlist/, (msg) => {
-  if (String(msg.from.id) !== ADMIN_ID) {
-    return bot.sendMessage(msg.chat.id, "⛔ Not authorized.");
-  }
+  if (String(msg.from.id) !== ADMIN_ID) return;
 
   const ids = [...PREMIUM_USERS];
 
@@ -211,7 +204,7 @@ bot.onText(/\/premiumlist/, (msg) => {
 
   bot.sendMessage(
     msg.chat.id,
-    `⭐ Premium users (${ids.length}):
+`⭐ Premium users (${ids.length}):
 
 ${ids.join("\n")}`
   );
@@ -242,11 +235,6 @@ bot.on("message", async (msg) => {
 
     const data = await response.json();
 
-    if (!response.ok) {
-      bot.sendMessage(msg.chat.id, data.error || "Failed to check that domain.");
-      return;
-    }
-
     let premiumBadge = "";
     if (PREMIUM_USERS.has(msg.from.id)) {
       premiumBadge = "\n⭐ Premium User";
@@ -261,11 +249,10 @@ Suspicious: ${data.vtResult.suspicious}
 Harmless: ${data.vtResult.harmless}
 Undetected: ${data.vtResult.undetected}
 `;
-    } else if (!PREMIUM_USERS.has(msg.from.id)) {
+    } else {
       vtInfo = `
-🔒 VirusTotal details are available for premium users.
-Use /upgrade to learn more.
-`;
+🔒 VirusTotal results are premium.
+Use /upgrade to unlock.`;
     }
 
     const reply = `
@@ -276,18 +263,16 @@ Use /upgrade to learn more.
 
 📅 Created: ${data.createdAt}
 🕒 Age (days): ${data.ageDays ?? "Unknown"}
-🙈 Owner hidden: ${data.hiddenOwner ? "Yes" : "No"}
-⚠️ Risky extension: ${data.riskyTld}
-
-Reasons:
-${data.reasons.length ? data.reasons.map((r) => `- ${r}`).join("\n") : "- No major red flags found"}
 
 ${vtInfo}
 `;
 
     bot.sendMessage(msg.chat.id, reply.trim());
+
   } catch (error) {
-    console.error("Bot error:", error);
-    bot.sendMessage(msg.chat.id, "Failed to connect to the scam checker API.");
+    console.error(error);
+    bot.sendMessage(msg.chat.id, "Failed to check domain.");
   }
 });
+
+initDatabase();
