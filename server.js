@@ -2,11 +2,26 @@ const express = require("express");
 const path = require("path");
 const whois = require("whois");
 const axios = require("axios");
+const crypto = require("crypto");
+const { Pool } = require("pg");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json());
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false,
+});
+
+// Keep raw body for Paystack webhook signature verification
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
+
 app.use(express.static(path.join(__dirname, "public")));
 
 function normalizeDomain(input) {
@@ -159,6 +174,36 @@ async function checkVirusTotalDomain(domain) {
   }
 }
 
+async function addPremiumUser(userId) {
+  await pool.query(
+    `
+    CREATE TABLE IF NOT EXISTS premium_users (
+      user_id BIGINT PRIMARY KEY,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    `
+  );
+
+  await pool.query(
+    "INSERT INTO premium_users (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING",
+    [userId]
+  );
+}
+
+async function sendTelegramMessage(chatId, text) {
+  const token = process.env.BOT_TOKEN;
+  if (!token) return;
+
+  try {
+    await axios.post(`https://api.telegram.org/bot${token}/sendMessage`, {
+      chat_id: chatId,
+      text,
+    });
+  } catch (error) {
+    console.error("Failed to send Telegram message:", error.response?.data || error.message);
+  }
+}
+
 app.post("/api/check", async (req, res) => {
   try {
     const input = req.body.domain;
@@ -227,7 +272,8 @@ app.post("/api/check", async (req, res) => {
     });
   }
 });
-// PAYMENT LINK GENERATOR
+
+// Create Paystack payment link with telegram metadata
 app.post("/api/payment-link", async (req, res) => {
   try {
     const { telegramId } = req.body;
@@ -236,18 +282,103 @@ app.post("/api/payment-link", async (req, res) => {
       return res.status(400).json({ error: "Telegram ID required" });
     }
 
-    const paymentLink = `https://paystack.com/pay/scamchecker-premium`;
+    if (!process.env.PAYSTACK_SECRET) {
+      return res.status(500).json({ error: "PAYSTACK_SECRET is missing on server." });
+    }
+
+    if (!process.env.PUBLIC_BASE_URL) {
+      return res.status(500).json({ error: "PUBLIC_BASE_URL is missing on server." });
+    }
+
+    // Fake internal email for Paystack initialization
+    const email = `tg${telegramId}@scamchecker.app`;
+
+    const response = await axios.post(
+      "https://api.paystack.co/transaction/initialize",
+      {
+        email,
+        amount: 300, // $3.00 equivalent if your Paystack account is in USD minor units; adjust if needed
+        currency: "USD",
+        callback_url: `${process.env.PUBLIC_BASE_URL}/payment-success`,
+        metadata: {
+          telegram_id: String(telegramId),
+          source: "telegram_bot",
+          plan: "premium_monthly",
+        },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
 
     res.json({
-      paymentLink,
-      telegramId
+      paymentLink: response.data.data.authorization_url,
+      reference: response.data.data.reference,
     });
-
   } catch (error) {
-    console.error(error);
+    console.error("Payment link error:", error.response?.data || error.message);
     res.status(500).json({ error: "Failed to create payment link" });
   }
 });
+
+// Optional success page
+app.get("/payment-success", (req, res) => {
+  res.send(`
+    <html>
+      <head><title>Payment Received</title></head>
+      <body style="font-family: Arial, sans-serif; padding: 40px;">
+        <h2>Payment received</h2>
+        <p>If your payment was successful, your Telegram premium will activate automatically in a moment.</p>
+        <p>You can return to Telegram now.</p>
+      </body>
+    </html>
+  `);
+});
+
+// Paystack webhook
+app.post("/paystack/webhook", async (req, res) => {
+  try {
+    const signature = req.headers["x-paystack-signature"];
+    const secret = process.env.PAYSTACK_SECRET;
+
+    if (!secret) {
+      return res.status(500).send("Missing PAYSTACK_SECRET");
+    }
+
+    const hash = crypto
+      .createHmac("sha512", secret)
+      .update(req.rawBody)
+      .digest("hex");
+
+    if (hash !== signature) {
+      return res.status(401).send("Invalid signature");
+    }
+
+    const event = req.body;
+
+    if (event.event === "charge.success") {
+      const telegramId = event.data?.metadata?.telegram_id;
+
+      if (telegramId) {
+        await addPremiumUser(Number(telegramId));
+
+        await sendTelegramMessage(
+          Number(telegramId),
+          "✅ Payment confirmed. Your premium access has been activated automatically."
+        );
+      }
+    }
+
+    res.sendStatus(200);
+  } catch (error) {
+    console.error("Webhook error:", error.response?.data || error.message || error);
+    res.sendStatus(500);
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Scam Checker running on port ${PORT}`);
 });
