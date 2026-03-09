@@ -167,8 +167,6 @@ async function registerReferral(referrerId, referredId) {
   return { created: true, total, rewardGiven };
 }
 
-console.log("Telegram bot is running...");
-
 function normalizeDomain(input) {
   try {
     let value = input.trim().toLowerCase();
@@ -183,6 +181,42 @@ function normalizeDomain(input) {
     return null;
   }
 }
+
+function extractDomainFromText(text) {
+  if (!text) return null;
+
+  const urlMatch = text.match(/https?:\/\/[^\s]+/i);
+  if (urlMatch) {
+    return normalizeDomain(urlMatch[0]);
+  }
+
+  const domainMatch = text.match(/\b([a-z0-9-]+\.)+[a-z]{2,}\b/i);
+  if (domainMatch) {
+    return normalizeDomain(domainMatch[0]);
+  }
+
+  return null;
+}
+
+async function quickCheckDomain(domain) {
+  try {
+    const response = await fetch("https://scam-checker.onrender.com/api/check", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ domain }),
+    });
+
+    const data = await response.json();
+    if (!response.ok) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+console.log("Telegram bot is running...");
 
 bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
   users.add(msg.from.id);
@@ -592,6 +626,35 @@ Checked with Scamchecker Bot
   }
 }
 
+async function runGroupDomainCheck(msg, domainInput) {
+  const domain = normalizeDomain(domainInput);
+  if (!domain) return;
+
+  try {
+    const data = await quickCheckDomain(domain);
+    if (!data) return;
+
+    if (data.riskLevel === "HIGH" || data.score >= 60) {
+      await bot.sendMessage(
+        msg.chat.id,
+        `⚠️ Scamchecker warning
+
+Domain: ${data.domain}
+Risk: ${data.riskLevel}
+Score: ${data.score}/100
+
+Top reasons:
+${data.reasons?.slice(0, 3).map((r) => `• ${r}`).join("\n") || "• High risk detected"}`,
+        {
+          reply_to_message_id: msg.message_id
+        }
+      );
+    }
+  } catch (error) {
+    console.error("Group check error:", error);
+  }
+}
+
 bot.onText(/\/check (.+)/, async (msg, match) => {
   users.add(msg.from.id);
   await runDomainCheck(msg, match[1]);
@@ -602,6 +665,16 @@ bot.on("message", async (msg) => {
 
   const text = msg.text;
   if (!text || text.startsWith("/")) return;
+
+  const isGroup = msg.chat.type === "group" || msg.chat.type === "supergroup";
+
+  if (isGroup) {
+    const domain = extractDomainFromText(text);
+    if (!domain) return;
+
+    await runGroupDomainCheck(msg, domain);
+    return;
+  }
 
   await runDomainCheck(msg, text);
 });
