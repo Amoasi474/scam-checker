@@ -519,7 +519,6 @@ bot.on("callback_query", async (query) => {
 
   await bot.answerCallbackQuery(query.id);
 });
-
 async function runDomainCheck(msg, domainInput) {
   const domain = normalizeDomain(domainInput);
 
@@ -527,25 +526,15 @@ async function runDomainCheck(msg, domainInput) {
     return bot.sendMessage(msg.chat.id, "Please send a valid domain or URL.");
   }
 
-  const isPremium = PREMIUM_USERS.has(msg.from.id);
-
-  if (!isPremium) {
-    const usedToday = await getTodayUsage(msg.from.id);
-    const limit = await getDailyLimit(msg.from.id);
-
-    if (usedToday >= limit) {
-      return bot.sendMessage(
-        msg.chat.id,
-`🛑 You have reached your free daily limit of ${limit} scans for today.
-
-Use /upgrade to unlock unlimited scans.
-Use /invite to earn extra scans.`
-      );
-    }
+  if (!process.env.PUBLIC_BASE_URL) {
+    return bot.sendMessage(msg.chat.id, "PUBLIC_BASE_URL is missing.");
   }
 
   try {
-    const response = await fetch(`${process.env.PUBLIC_BASE_URL}/api/check`, {
+    const url = `${process.env.PUBLIC_BASE_URL}/api/check`;
+    console.log("Checking URL:", url);
+
+    const response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -554,104 +543,18 @@ Use /invite to earn extra scans.`
     });
 
     const data = await response.json();
+    console.log("API response:", data);
 
     if (!response.ok) {
       return bot.sendMessage(msg.chat.id, data.error || "Failed to check that domain.");
     }
 
-    if (!isPremium) {
-      await incrementTodayUsage(msg.from.id);
-    }
-
-    let riskEmoji = "🟢";
-    if (data.riskLevel === "HIGH") riskEmoji = "🔴";
-    else if (data.riskLevel === "MEDIUM") riskEmoji = "🟠";
-
-    let premiumBadge = "";
-    if (isPremium) {
-      premiumBadge = "\n⭐ Premium User";
-    }
-
-    let vtInfo = "";
-    if (isPremium && data.vtResult) {
-      vtInfo = `
-🛡 VirusTotal
-• Malicious: ${data.vtResult.malicious}
-• Suspicious: ${data.vtResult.suspicious}
-• Harmless: ${data.vtResult.harmless}
-• Undetected: ${data.vtResult.undetected}
-`;
-    } else {
-      const usedNow = isPremium ? 0 : await getTodayUsage(msg.from.id);
-      const limit = isPremium ? Infinity : await getDailyLimit(msg.from.id);
-      const remaining = isPremium ? "Unlimited" : Math.max(limit - usedNow, 0);
-
-      vtInfo = `
-🔒 VirusTotal results are premium.
-Use /upgrade to unlock.
-
-${isPremium ? "" : `Free scans remaining today: ${remaining}`}
-`;
-    }
-
-    const reasonsText = data.reasons?.length
-      ? data.reasons.slice(0, 3).map((r) => `• ${r}`).join("\n")
-      : "• No major red flags found";
-
-    const card = `
-┏━━━━━━━━━━━━━━━━━━┓
-   SCAMCHECKER REPORT
-┗━━━━━━━━━━━━━━━━━━┛
-
-🌐 Domain: ${data.domain}${premiumBadge}
-${riskEmoji} Risk Level: ${data.riskLevel}
-📊 Score: ${data.score}/100
-📅 Created: ${data.createdAt}
-🕒 Age: ${data.ageDays ?? "Unknown"} days
-
-Top Reasons:
-${reasonsText}
-
-${vtInfo}
-
-Checked with Scamchecker Bot
-`;
-
-    const keyboard = {
-      inline_keyboard: [
-        [
-          {
-            text: "🚀 Upgrade",
-            callback_data: "upgrade_dynamic"
-          },
-          process.env.BOT_USERNAME
-            ? {
-                text: "📣 Share Bot",
-                url: `https://t.me/${process.env.BOT_USERNAME}`
-              }
-            : {
-                text: "📣 Share Bot",
-                callback_data: "share_bot_unavailable"
-              }
-        ],
-        [
-          {
-            text: "🔎 Check Another",
-            callback_data: "check_another"
-          }
-        ]
-      ]
-    };
-
-    await bot.sendMessage(msg.chat.id, card.trim(), {
-      reply_markup: keyboard
-    });
+    return bot.sendMessage(msg.chat.id, "Check worked.");
   } catch (error) {
-    console.error(error);
-    bot.sendMessage(msg.chat.id, "Failed to check domain.");
+    console.error("runDomainCheck error:", error);
+    return bot.sendMessage(msg.chat.id, `Failed to check domain.\n${error.message}`);
   }
 }
-
 async function runGroupDomainCheck(msg, domainInput) {
   const domain = normalizeDomain(domainInput);
   if (!domain) return;
