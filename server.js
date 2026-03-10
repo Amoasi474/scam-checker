@@ -206,6 +206,8 @@ async function sendTelegramMessage(chatId, text) {
 app.get("/api/check", (req, res) => {
   res.json({ message: "API route is alive. Use POST to check domains." });
 });
+
+app.post("/api/check", async (req, res) => {
   try {
     const input = req.body.domain;
     const domain = normalizeDomain(input);
