@@ -203,8 +203,9 @@ async function sendTelegramMessage(chatId, text) {
     console.error("Failed to send Telegram message:", error.response?.data || error.message);
   }
 }
-
-app.post("/api/check", async (req, res) => {
+app.get("/api/check", (req, res) => {
+  res.json({ message: "API route is alive. Use POST to check domains." });
+});
   try {
     const input = req.body.domain;
     const domain = normalizeDomain(input);
@@ -217,7 +218,7 @@ app.post("/api/check", async (req, res) => {
     try {
       rawWhois = await lookupWhois(domain);
     } catch (error) {
-      console.log("WHOIS lookup failed");
+      console.log("WHOIS lookup failed:", error.message);
       rawWhois = "";
     }
 
@@ -232,7 +233,13 @@ app.post("/api/check", async (req, res) => {
       riskyTld,
     });
 
-    const vtResult = await checkVirusTotalDomain(domain);
+    let vtResult = null;
+    try {
+      vtResult = await checkVirusTotalDomain(domain);
+    } catch (error) {
+      console.log("VirusTotal lookup failed:", error.message);
+      vtResult = null;
+    }
 
     if (vtResult) {
       if (vtResult.malicious > 0) {
@@ -254,7 +261,7 @@ app.post("/api/check", async (req, res) => {
       }
     }
 
-    res.json({
+    return res.json({
       domain,
       createdAt: createdAtRaw || "Not found",
       ageDays,
@@ -266,9 +273,9 @@ app.post("/api/check", async (req, res) => {
       vtResult,
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      error: "Failed to analyze domain. Try again with another website.",
+    console.error("API /api/check error:", error);
+    return res.status(500).json({
+      error: error.message || "Failed to analyze domain. Try again with another website.",
     });
   }
 });
