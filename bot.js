@@ -1,4 +1,6 @@
 require("./server");
+global.bot = bot;
+global.addPremiumUser = addPremiumUser;
 
 const TelegramBot = require("node-telegram-bot-api");
 const { Pool } = require("pg");

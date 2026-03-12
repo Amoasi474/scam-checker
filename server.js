@@ -4,78 +4,93 @@ const crypto = require("crypto");
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-/* ---------------------------
-BODY PARSING
-----------------------------*/
-app.use(express.json());
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 
-/* ---------------------------
-SUCCESS PAGE
-----------------------------*/
+// Health check
+app.get("/", (req, res) => {
+  res.status(200).send("ScamChecker API is running.");
+});
+
+// Test route
 app.get("/payment-success", (req, res) => {
-  res.send(`
+  console.log("GET /payment-success hit");
+  return res.status(200).send(`
     <html>
-      <body style="font-family:sans-serif;text-align:center;padding:50px;">
+      <body style="font-family: Arial, sans-serif; padding: 40px; text-align: center;">
         <h1>✅ Payment Successful</h1>
-        <p>Your premium plan will activate shortly.</p>
-        <p>You can now return to Telegram.</p>
+        <p>Your payment was received.</p>
+        <p>You can return to Telegram now.</p>
       </body>
     </html>
   `);
 });
 
-/* ---------------------------
-PAYSTACK WEBHOOK
-----------------------------*/
+// Webhook route
 app.post("/paystack/webhook", async (req, res) => {
+  console.log("POST /paystack/webhook hit");
+
   try {
-
-    const event = req.body;
-
-    if (!event || !event.event) {
-      console.log("Invalid webhook payload");
-      return res.sendStatus(200);
+    const secret = process.env.PAYSTACK_SECRET;
+    if (!secret) {
+      console.log("Missing PAYSTACK_SECRET");
+      return res.status(500).send("Missing PAYSTACK_SECRET");
     }
 
-    if (event.event === "charge.success") {
+    const signature = req.headers["x-paystack-signature"];
+    const hash = crypto
+      .createHmac("sha512", secret)
+      .update(req.rawBody)
+      .digest("hex");
 
-      const metadata = event.data?.metadata;
+    if (hash !== signature) {
+      console.log("Invalid Paystack signature");
+      return res.status(401).send("Invalid signature");
+    }
 
-      if (!metadata || !metadata.telegram_id) {
+    const event = req.body;
+    console.log("Webhook event:", event?.event);
+
+    if (event?.event === "charge.success") {
+      const telegramId = Number(event?.data?.metadata?.telegram_id);
+
+      if (!telegramId) {
         console.log("No telegram_id in metadata");
         return res.sendStatus(200);
       }
 
-      const telegramId = Number(metadata.telegram_id);
+      console.log("Successful payment for telegramId:", telegramId);
 
-      console.log("Activating premium for:", telegramId);
+      if (global.addPremiumUser) {
+        await global.addPremiumUser(telegramId);
+        console.log("Premium user added to database");
+      } else {
+        console.log("global.addPremiumUser is missing");
+      }
 
-      PREMIUM_USERS.add(telegramId);
-
-      await bot.sendMessage(
-        telegramId,
-        "🎉 Payment received! Premium activated."
-      );
+      if (global.bot) {
+        await global.bot.sendMessage(
+          telegramId,
+          "✅ Payment confirmed. Your premium access has been activated."
+        );
+        console.log("Telegram confirmation sent");
+      } else {
+        console.log("global.bot is missing");
+      }
     }
 
-    res.sendStatus(200);
-
-  } catch (err) {
-    console.error("Webhook error:", err);
-    res.sendStatus(200);
+    return res.sendStatus(200);
+  } catch (error) {
+    console.error("Webhook error:", error);
+    return res.status(500).send("Webhook failed");
   }
 });
 
-/* ---------------------------
-HEALTH CHECK
-----------------------------*/
-app.get("/", (req, res) => {
-  res.send("ScamChecker API is running.");
-});
-
-/* ---------------------------
-START SERVER
-----------------------------*/
 app.listen(PORT, () => {
   console.log(`Scam Checker running on port ${PORT}`);
 });
