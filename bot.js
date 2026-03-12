@@ -167,23 +167,49 @@ async function registerReferral(referrerId, referredId) {
 }
 
 async function createPaymentLink(telegramId) {
-  const response = await fetch (`${process.env.PUBLIC_BASE_URL}/api/payment-link`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ telegramId })
-  });
+  if (!process.env.PUBLIC_BASE_URL) {
+    throw new Error("PUBLIC_BASE_URL is missing.");
+  }
 
-  const data = await response.json();
+  const url = `${process.env.PUBLIC_BASE_URL}/api/payment-link`;
+  console.log("Creating payment link with URL:", url);
+  console.log("Telegram ID:", telegramId);
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ telegramId }),
+    });
+  } catch (error) {
+    console.error("Fetch error in createPaymentLink:", error);
+    throw new Error(`Could not reach payment server: ${error.message}`);
+  }
+
+  let data;
+  try {
+    data = await response.json();
+  } catch (error) {
+    console.error("JSON parse error in createPaymentLink:", error);
+    throw new Error("Server returned an invalid response.");
+  }
+
+  console.log("Payment link response status:", response.status);
+  console.log("Payment link response data:", data);
 
   if (!response.ok) {
-    throw new Error(data.error || "Failed to create payment link.");
+    throw new Error(data.error || `Failed to create payment link. Status: ${response.status}`);
+  }
+
+  if (!data.paymentLink) {
+    throw new Error("Payment link was not returned by the server.");
   }
 
   return data.paymentLink;
 }
-
 function normalizeDomain(input) {
   try {
     let value = input.trim().toLowerCase();
