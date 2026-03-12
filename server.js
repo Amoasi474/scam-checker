@@ -11,6 +11,7 @@ app.use(
     },
   })
 );
+app.use(express.urlencoded({ extended: true }));
 
 // Health check
 app.get("/", (req, res) => {
@@ -45,7 +46,7 @@ app.post("/paystack/webhook", async (req, res) => {
     const signature = req.headers["x-paystack-signature"];
     const hash = crypto
       .createHmac("sha512", secret)
-      .update(req.rawBody || JSON.stringify(req.body))
+      .update(req.rawBody || "")
       .digest("hex");
 
     if (hash !== signature) {
