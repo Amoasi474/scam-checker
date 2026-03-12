@@ -1,4 +1,4 @@
-require("./server");
+
 
 
 const TelegramBot = require("node-telegram-bot-api");
@@ -656,3 +656,5 @@ bot.on("message", async (msg) => {
 });
 
 initDatabase();
+
+require("./server");
