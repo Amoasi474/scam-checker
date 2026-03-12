@@ -2,7 +2,7 @@ const express = require("express");
 const crypto = require("crypto");
 
 const app = express();
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT;
 
 app.use(
   express.json({
@@ -92,6 +92,6 @@ app.post("/paystack/webhook", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`Scam Checker running on port ${PORT}`);
 });
