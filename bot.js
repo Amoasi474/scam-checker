@@ -1,3 +1,5 @@
+require("./server");
+
 const TelegramBot = require("node-telegram-bot-api");
 const { Pool } = require("pg");
 
