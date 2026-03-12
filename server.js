@@ -7,7 +7,7 @@ const PORT = process.env.PORT || 8080;
 app.use(
   express.json({
     verify: (req, res, buf) => {
-      req.rawBody = buf;
+      req.rawBody = buf?.toString();
     },
   })
 );
@@ -45,7 +45,7 @@ app.post("/paystack/webhook", async (req, res) => {
     const signature = req.headers["x-paystack-signature"];
     const hash = crypto
       .createHmac("sha512", secret)
-      .update(req.rawBody)
+      .update(req.rawBody || JSON.stringify(req.body))
       .digest("hex");
 
     if (hash !== signature) {
