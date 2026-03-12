@@ -166,49 +166,63 @@ async function registerReferral(referrerId, referredId) {
   return { created: true, total, rewardGiven };
 }
 
+const axios = require("axios");
+
 async function createPaymentLink(telegramId) {
+  if (!telegramId) {
+    throw new Error("Telegram ID is required.");
+  }
+
+  if (!process.env.PAYSTACK_SECRET) {
+    throw new Error("PAYSTACK_SECRET is missing.");
+  }
+
   if (!process.env.PUBLIC_BASE_URL) {
     throw new Error("PUBLIC_BASE_URL is missing.");
   }
 
-  const url = `${process.env.PUBLIC_BASE_URL}/api/payment-link`;
-  console.log("Creating payment link with URL:", url);
-  console.log("Telegram ID:", telegramId);
+  const email = `tg${telegramId}@scamchecker.app`;
 
-  let response;
   try {
-    response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
+    const response = await axios.post(
+      "https://api.paystack.co/transaction/initialize",
+      {
+        email,
+        amount: 300,
+        currency: "GHS",
+        callback_url: `${process.env.PUBLIC_BASE_URL}/payment-success`,
+        metadata: {
+          telegram_id: String(telegramId),
+          source: "telegram_bot",
+          plan: "premium_monthly",
+        },
       },
-      body: JSON.stringify({ telegramId }),
-    });
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET}`,
+          "Content-Type": "application/json",
+        },
+        timeout: 15000,
+      }
+    );
+
+    const paymentLink = response.data?.data?.authorization_url;
+
+    if (!paymentLink) {
+      throw new Error("Paystack did not return a payment link.");
+    }
+
+    return paymentLink;
   } catch (error) {
-    console.error("Fetch error in createPaymentLink:", error);
-    throw new Error(`Could not reach payment server: ${error.message}`);
+    console.error(
+      "Direct Paystack createPaymentLink error:",
+      error.response?.data || error.message || error
+    );
+
+    throw new Error(
+      error.response?.data?.message || "Failed to create payment link."
+    );
   }
-
-  let data;
-  try {
-    data = await response.json();
-  } catch (error) {
-    console.error("JSON parse error in createPaymentLink:", error);
-    throw new Error("Server returned an invalid response.");
-  }
-
-  console.log("Payment link response status:", response.status);
-  console.log("Payment link response data:", data);
-
-  if (!response.ok) {
-    throw new Error(data.error || `Failed to create payment link. Status: ${response.status}`);
-  }
-
-  if (!data.paymentLink) {
-    throw new Error("Payment link was not returned by the server.");
-  }
-
-  return data.paymentLink;
 }
 function normalizeDomain(input) {
   try {
